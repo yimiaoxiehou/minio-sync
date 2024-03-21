@@ -72,29 +72,44 @@ func main() {
 	if len(os.Args) < 2 { // 没有输入子命令, 输出帮助信息
 		useage()
 	}
-
 	cmd := subCmds[os.Args[1]] //  获取子命令
 	if cmd == nil {
 		useage()
 	}
 	cmd.Parse(os.Args[2:]) // 解析子命令
 
+	if len(os.Args) == 2 { // 没有输入子命令参数，使用env
+		log.Println("not arg for subCmd, use env.")
+		if a := os.Getenv("LISTEN"); a != "" {
+			addr = a
+		}
+		if a := os.Getenv("CONNECT"); a != "" {
+			addr = a
+		}
+		if a := os.Getenv("MINIO_ADDRESS"); a != "" {
+			minioAddress = a
+		}
+		if a := os.Getenv("MINIO_PASSWORD"); a != "" {
+			minioPassword = a
+		}
+		if a := os.Getenv("MINIO_USERNAME"); a != "" {
+			minioUsername = a
+		}
+		if a := os.Getenv("APPEND_ONLY"); a != "" {
+			appendOnly = a
+		}
+		if a := os.Getenv("SKIP_BUCKETS"); a != "" {
+			skipBuckets = a
+		}
+	}
+
 	switch cmd.Name() {
 	case "server":
-		cmd.Visit(func(f *flag.Flag) {
-			fmt.Printf("option %s, value is %s\n", f.Name, f.Value)
-		})
-
 		minio.InitMinioClient(minioAddress, minioUsername, minioPassword)
 		c.RunServer(addr)
 
 	case "client":
-		cmd.Visit(func(f *flag.Flag) {
-			fmt.Printf("option %s, value is %s\n", f.Name, f.Value)
-		})
-
 		minio.InitMinioClient(minioAddress, minioUsername, minioPassword)
-
 		ao, err := strconv.ParseBool(appendOnly)
 		if err != nil {
 			log.Fatalln("args appendOnly parse error. mush be bool value")

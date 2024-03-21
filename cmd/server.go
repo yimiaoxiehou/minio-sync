@@ -5,7 +5,6 @@ import (
 	"sync/atomic"
 
 	"github.com/panjf2000/gnet/v2"
-	"github.com/panjf2000/gnet/v2/pkg/logging"
 	"google.golang.org/protobuf/proto"
 
 	"log"
@@ -18,23 +17,23 @@ import (
 // main is the entry point of the program
 type server struct {
 	gnet.BuiltinEventEngine
-	eng          gnet.Engine
-	network      string
-	addr         string
-	multicore    bool
-	connected    int32
-	disconnected int32
+	eng       gnet.Engine
+	network   string
+	addr      string
+	multicore bool
+	connected int32
 }
 
 var dataBuffer chan ([]byte) = make(chan ([]byte))
-var respBuffer chan (*message.RespMessage) = make(chan (*message.RespMessage))
+
+// var respBuffer chan (*message.RespMessage) = make(chan (*message.RespMessage))
 
 // OnBoot description of the Go function.
 //
 // Takes an eng of type gnet.Engine.
 // Returns an action of type gnet.Action.
 func (s *server) OnBoot(eng gnet.Engine) (action gnet.Action) {
-	logging.Infof("running server on %s with multi-core=%t",
+	log.Printf("running server on %s with multi-core=%t",
 		fmt.Sprintf("%s://%s", s.network, s.addr), s.multicore)
 	s.eng = eng
 	return
@@ -66,14 +65,14 @@ func (s *server) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		return
 	}
 	if err != nil {
-		logging.Errorf("invalid packet: %v", err)
-		return gnet.Close
+		log.Fatalf("invalid packet: %v", err)
 	}
+	log.Printf("receive data length(%d)\n", len(data))
 	dataBuffer <- data
-	resp := <-respBuffer
-	log.Println(resp)
-	res := resp.EncodeToByte()
-	_, _ = c.Write([]byte{res})
+	// resp := <-respBuffer
+	// log.Println(resp)
+	// res := resp.EncodeToByte()
+	// _, _ = c.Write([]byte{res})
 	return
 }
 
@@ -86,7 +85,7 @@ func RunServer(addr string) {
 		multicore: false,
 	}
 	err := gnet.Run(ss, ss.network+"://"+ss.addr, gnet.WithMulticore(false))
-	logging.Infof("server exits with error: %v", err)
+	log.Printf("server exits with error: %v\n", err)
 }
 
 func received() {
@@ -95,18 +94,17 @@ func received() {
 		msgRec := message.MinioMessage{}
 		err := proto.Unmarshal(data, &msgRec)
 		if err != nil {
+			fmt.Println(data)
 			log.Panicln(err)
 		}
-		go func() {
-			err = minio.ProcessMinioEvent(&msgRec)
-			if err != nil {
-				log.Panicln(err)
-			}
-		}()
-		resp := &message.RespMessage{
-			Seq: msgRec.Seq,
-			Ok:  true,
+		err = minio.ProcessMinioEvent(&msgRec)
+		if err != nil {
+			log.Panicln(err)
 		}
-		respBuffer <- resp
+		// resp := &message.RespMessage{
+		// 	Seq: msgRec.Seq,
+		// 	Ok:  true,
+		// }
+		// respBuffer <- resp
 	}
 }

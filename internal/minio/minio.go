@@ -41,6 +41,7 @@ func InitMinioClient(minioAddress, minioUsername, minioPassword string) {
 
 func ProcessMinioEvent(msg *message.MinioMessage) error {
 	log.Printf("process msg seq(%d) type(%s) bucket(%s) name(%s)\n", msg.GetSeq(), msg.GetType().String(), msg.GetBucket(), msg.GetName())
+	defer log.Printf("process msg seq(%d) type(%s) bucket(%s) name(%s) done\n", msg.GetSeq(), msg.GetType().String(), msg.GetBucket(), msg.GetName())
 	switch msg.GetType().Number() {
 	case message.MessageType_Minio_IAM_Export.Number():
 		return aClient.ImportIAM(context.Background(), io.NopCloser(bytes.NewBuffer(msg.GetContent())))
@@ -147,29 +148,35 @@ func ExportIAM() *message.MinioMessage {
 }
 
 func ExportAllObject(reqBuffer chan *message.MinioMessage) {
+	log.Println("export all object.")
 	bks, err := mClient.ListBuckets(context.Background())
 	logErr(err)
 	for _, bk := range bks {
-		for obj := range mClient.ListObjects(context.Background(), bk.Name, minio.ListObjectsOptions{}) {
-			if obj.Size == 0 && strings.HasSuffix(obj.Key, string(os.PathSeparator)) {
-				continue
-			}
-			r, err := mClient.GetObject(context.Background(), bk.Name, obj.Key, minio.GetObjectOptions{})
-			logErr(err)
-			cont, err := io.ReadAll(r)
-			if err != nil {
-				logErr(err)
-			}
-			msg := message.MinioMessage{
-				Seq:     idgenerator.GetInstance().Get(),
-				Type:    message.MessageType_S3_Object_Put,
-				Bucket:  bk.Name,
-				Name:    obj.Key,
-				Etag:    obj.ETag,
-				Content: cont,
-			}
-			reqBuffer <- &msg
+		listBucketAllObj(bk.Name, "", reqBuffer)
+	}
+}
+
+func listBucketAllObj(bk, prefix string, reqBuffer chan *message.MinioMessage) {
+	for obj := range mClient.ListObjects(context.Background(), bk, minio.ListObjectsOptions{Prefix: prefix}) {
+		if obj.Size == 0 && strings.HasSuffix(obj.Key, string(os.PathSeparator)) {
+			listBucketAllObj(bk, obj.Key, reqBuffer)
+			continue
 		}
+		r, err := mClient.GetObject(context.Background(), bk, obj.Key, minio.GetObjectOptions{})
+		logErr(err)
+		cont, err := io.ReadAll(r)
+		if err != nil {
+			logErr(err)
+		}
+		msg := message.MinioMessage{
+			Seq:     idgenerator.GetInstance().Get(),
+			Type:    message.MessageType_S3_Object_Put,
+			Bucket:  bk,
+			Name:    obj.Key,
+			Etag:    obj.ETag,
+			Content: cont,
+		}
+		reqBuffer <- &msg
 	}
 }
 

@@ -1,57 +1,46 @@
 package cmd
 
 import (
-	"bufio"
 	"log"
-	"net"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/panjf2000/gnet/v2/pkg/logging"
 	"github.com/robfig/cron/v3"
 	"github.com/yimiaoxiehou/minio-sync/internal/message"
 	"github.com/yimiaoxiehou/minio-sync/internal/minio"
 	"github.com/yimiaoxiehou/minio-sync/internal/protocol"
+	rconn "github.com/yimiaoxiehou/minio-sync/internal/reconnectconn"
 )
 
 func RunClient(addr string, skipBuckets []string, appendOnly bool) {
-	c, err := net.Dial("tcp", addr)
-	logErr(err)
-	logging.Infof("connection=%s starts...", c.LocalAddr().String())
-	defer func() {
-		logging.Infof("connection=%s stops...", c.LocalAddr().String())
-		c.Close()
-	}()
-	rd := bufio.NewReader(c)
-	msg, err := rd.ReadBytes('\n')
-	logErr(err)
-	if string(msg) != protocol.ConnectedAck {
-		logging.Fatalf("the first response packet mismatches, expect: \"%s\", but got: \"%s\"", protocol.ConnectedAck, msg)
-	}
-	go sendAndRecv(c, rd)
 
-	minio.ExportAllObject(reqBuffer)
-	// 同步iam信息
+	c := rconn.New(addr, time.Second*3, 3, time.Second*10, func(err error) {
+		log.Fatalln(err)
+	})
+	defer c.Close()
+	go sendAndRecv(c)
+
+	log.Println("同步 IAM 信息")
 	reqBuffer <- minio.ExportIAM()
+	log.Println("同步 bucket 信息")
+	for _, m := range minio.ExpoortBucketMetadata(skipBuckets) {
+		log.Printf("同步 bucket(%s) 信息\n", m.Name)
+		reqBuffer <- m
+	}
 	if !appendOnly {
-		// 同步bucket信息
-		for _, m := range minio.ExpoortBucketMetadata(skipBuckets) {
-			reqBuffer <- m
-		}
+		minio.ExportAllObject(reqBuffer)
 	}
 
 	// Schedule a cron job to export IAM and Minio buckets data every 5 minutes
 	cr := cron.New()
-	_, err = cr.AddFunc("@every 2h", func() {
-		// 同步iam信息
+	_, err := cr.AddFunc("@every 2h", func() {
+		log.Println("同步 IAM 信息")
 		reqBuffer <- minio.ExportIAM()
-		// 同步bucket信息
-
-		if !appendOnly {
-			// 同步bucket信息
-			for _, m := range minio.ExpoortBucketMetadata(skipBuckets) {
-				reqBuffer <- m
-			}
+		log.Println("同步 bucket 信息")
+		for _, m := range minio.ExpoortBucketMetadata(skipBuckets) {
+			log.Printf("同步 bucket(%s) 信息\n", m.Name)
+			reqBuffer <- m
 		}
 	})
 	logErr(err)
@@ -60,28 +49,25 @@ func RunClient(addr string, skipBuckets []string, appendOnly bool) {
 }
 
 func logErr(err error) {
-	logging.Error(err)
 	if err != nil {
-		panic(err)
+		log.Fatalln(err)
 	}
 }
 
 var reqBuffer chan (*message.MinioMessage) = make(chan (*message.MinioMessage), 8)
 
-func sendAndRecv(c net.Conn, rd *bufio.Reader) {
+func sendAndRecv(c *rconn.Conn) {
 	for {
 		msg := <-reqBuffer
 		log.Printf("send message seq(%d) type(%s) bucket(%s) name(%s)\n", msg.GetSeq(), msg.GetType().String(), msg.GetBucket(), msg.GetName())
 		codec := protocol.LengthFieldBasedFrameCodec{}
 		encodingMsg, err := proto.Marshal(msg)
 		logErr(err)
+		log.Printf("send data length(%d)\n", len(encodingMsg))
 		packet, err := codec.Encode(encodingMsg)
 		logErr(err)
 		_, err = c.Write(packet)
 		logErr(err)
-		bs, err := rd.ReadByte()
-		logErr(err)
-		resp := message.DecodeFromByte(bs)
-		log.Printf("receive resp seq(%d) ok(%t)\n", resp.GetSeq(), resp.GetOk())
+		log.Printf("send message seq(%d) type(%s) bucket(%s) name(%s) done\n", msg.GetSeq(), msg.GetType().String(), msg.GetBucket(), msg.GetName())
 	}
 }
