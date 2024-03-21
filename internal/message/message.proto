@@ -1,0 +1,19 @@
+syntax = "proto3";
+option go_package="./;message";
+package message;
+
+enum MessageType {
+    S3_Obejct_Delete = 0;
+    S3_Object_Put = 1;
+    Minio_IAM_Export = 2;
+    Minio_BUCKETS_Export = 3;
+}
+
+message MinioMessage {
+    int32 seq = 1;
+    MessageType type = 2;
+    string bucket = 3;
+    string name = 4;
+    string etag = 5;
+    bytes content = 6;
+}
